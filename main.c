@@ -14,8 +14,9 @@
 /* Standard Includes */
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdio.h>
+
 #include <string.h>
+#include "printf.h"
 #include <math.h>
 
 
@@ -28,6 +29,8 @@
 #define NUM_BANDS 25
 #define NUM_BAND_BLOCKS 4
 #define FIRST_REG 0x10
+
+#define NUM_ADC14_CHANNELS 4
 
 const uint8_t firstReg = FIRST_REG;
 static uint8_t TXByteCtr;
@@ -106,8 +109,8 @@ const eUSCI_I2C_MasterConfig i2cConfig =
 };
 /* I2C Master Configuration Parameter */
 
-
-static uint16_t resultsBuffer[8]={0,0,0,0,0,0,0,0}; //ADC results
+/* Results buffer for ADC14 */
+uint16_t resultsBuffer[NUM_ADC14_CHANNELS]={0,0,0,0}; //ADC results
 
 /* UART Configuration Parameter. These are the configuration parameters to
  * make the eUSCI A UART module to operate with a 115200 baud rate. These
@@ -153,6 +156,7 @@ const eUSCI_SPI_MasterConfig spiMasterConfig =
 #endif
 
 /* Forward Declaration of Functions */
+void initializeClocks(void);
 int initializeBackChannelUART(void);
 int initializeADC(void);
 int initializeDDS(void);
@@ -170,7 +174,7 @@ void initI2C(void);
 
 
 /*
- * USCIA0 interrupt handler.
+ * USCIA0 interrupt handler for backchannel UART.
  * For interrupts, don't forget to edit the startup...c file!
  */
 void EusciA0_ISR(void)
@@ -192,6 +196,7 @@ void ADC14_IRQHandler(void)
     uint64_t status;
     status = ADC14_getEnabledInterruptStatus();
     ADC14_clearInterruptFlag(status);
+
     if(status & ADC_INT3)
     {
         ADC14_getMultiSequenceResult(resultsBuffer);
@@ -211,7 +216,6 @@ void EUSCIB1_IRQHandler(void)
 
 	if(justSending) /* We don't need to worry about receiving. */
 	{
-		//printf("TXByteCtr is: 0x %o",TXByteCtr);
 		if (status & EUSCI_B_I2C_NAK_INTERRUPT)
 		{
 	        I2C_masterSendStart(EUSCI_B1_BASE);
@@ -281,32 +285,36 @@ void EUSCIB1_IRQHandler(void)
 int main(void)
 {
 	volatile int i, j, temp;
+	volatile uint16_t test[NUM_ADC14_CHANNELS];
     /* Halting WDT  */
     MAP_WDT_A_holdTimer();
 
+/*    MAP_FPU_enableModule();
+    MAP_FPU_enableLazyStacking();*/
+/*
+    FPU_disableModule();
+    FPU_disableStacking();
+*/
+
     //MAP_Interrupt_enableSleepOnIsrExit();
-	Interrupt_enableMaster();
+
 
     while(!initializeBackChannelUART())
     {
-		for(i=0;i<100;i++); /* Wait to try again. */
+		for(i=0;i<100;i++);  /*Wait to try again. */
 	}
 
     while(!initializeADC())
     {
-    	printf("Problem with AD14 Conversion Initialization!\n");
 		for(i=0;i<100;i++); // Wait to try again.
 	}
 
-
+	Interrupt_enableMaster();
 
      /* Enabling the FPU for floating point operation */
-/*    MAP_FPU_enableModule();
-    MAP_FPU_enableLazyStacking();
-
-    while(!initializeDDS())
-   {
-    	for(i=0;i<100;i++);  Wait to try again.
+/*    while(!initializeDDS())
+    {
+    	for(i=0;i<100;i++);  //Wait to try again.
     }
 
     while(!initializeVersaclock())
@@ -344,34 +352,45 @@ int main(void)
     		printf("%#04x       %#04x        %#04x\n",versaClockRegisters.changedAddresses[i],
     				RXData[versaClockRegisters.changedAddresses[i]],
 					versaClockRegisters.registerValues[12][i]);
+    		if(RXData[versaClockRegisters.changedAddresses[i]]!=
+    				versaClockRegisters.registerValues[12][i])
+    			printf("VersaClock Registers did NOT match!\n");
     }*/
     /* Main while loop */
 	while(1)
 	{
 /*		Pulse the start of a conversion.	*/
-		printf("In main loop.\n");
+
 		while(!MAP_ADC14_toggleConversionTrigger()){
 			for(i=0;i<100;i++);  // Wait for conversion to finish.
 		}
- 		for(i=0;i<1000;i++){
+
+/* 		for(i=0;i<1000;i++){
 			temp = i*temp;
-		}
-		printf("\r\n Results are:\r\n");
-		for(i=0; i<4; i++){
-			printf("ADC # %d  ",i);
-			printf("Result: %d\n",resultsBuffer[i]);
+		}*/
+		printf(EUSCI_A0_BASE,"\r\n Results are:\r\n");
+		for(i=0; i<NUM_ADC14_CHANNELS; i++){
+			test[i] = resultsBuffer[i];
+			printf(EUSCI_A0_BASE,"ADC # %d  ",i);
+			printf(EUSCI_A0_BASE,"Result: %d\n",resultsBuffer[i]);
 		}
 		//MAP_PCM_gotoLPM0();
 	}
 }
 
-int initializeBackChannelUART(void){
-    /* Initialize main clock to 3MHz */
-    MAP_CS_setDCOCenteredFrequency(CS_DCO_FREQUENCY_3);
-    MAP_CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1 );
-    MAP_CS_initClockSignal(CS_HSMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1 );
-    MAP_CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1 );
+void initializeClocks(void)
+{
+    /* Initialize main clock to 48MHz.  To make it 3 MHz change the 48 to 3
+     * and the 16's to 1.*/
+    CS_setDCOCenteredFrequency(CS_DCO_FREQUENCY_48); // Full speed
+    CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_16 );
+    MAP_CS_initClockSignal(CS_HSMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_16 );
+    MAP_CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_16 );
+}
 
+int initializeBackChannelUART(void){
+
+	initializeClocks();
     /* Selecting P1.2 and P1.3 in UART mode. */
     MAP_GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P1,
         GPIO_PIN2 | GPIO_PIN3, GPIO_PRIMARY_MODULE_FUNCTION);
@@ -383,37 +402,39 @@ int initializeBackChannelUART(void){
     /* Enable UART module */
     MAP_UART_enableModule(EUSCI_A0_BASE);
 
-    /* Enable UART interrupts for backchannel UART */
-    MAP_UART_enableInterrupt(EUSCI_A0_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
-    MAP_Interrupt_enableInterrupt(INT_EUSCIA0);
+    /* Enable UART interrupts for backchannel UART
+     * We may or may not need to do this.  The simple
+     * printf() routine doesn't seem to use it.  */
+    //UART_enableInterrupt(EUSCI_A0_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
+    Interrupt_enableInterrupt(INT_EUSCIA0);
     return 1;
 }
 
 int initializeADC(void){
     /* Initializing ADC (MCLK/1/1) */
-    MAP_ADC14_enableModule();
-    MAP_ADC14_initModule(ADC_CLOCKSOURCE_MCLK, ADC_PREDIVIDER_1, ADC_DIVIDER_1,
-            0);
+    ADC14_enableModule();
+    ADC14_initModule(ADC_CLOCKSOURCE_MCLK, ADC_PREDIVIDER_1, ADC_DIVIDER_1,
+            ADC_NOROUTE);
 
     /* Configuring GPIOs for Analog In
      * Pin 4.1 is S21_Q, A12
      * Pin 4.3 is S21_I, A10
      * Pin 5.0 is S21_I, A5
      * Pin 5.1 is S21_Q, A3  */
-    MAP_GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P5,
+    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P5,
              GPIO_PIN1| GPIO_PIN0, GPIO_TERTIARY_MODULE_FUNCTION);
-    MAP_GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
+    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
             GPIO_PIN1 | GPIO_PIN3, GPIO_TERTIARY_MODULE_FUNCTION);
 
     /* Configuring ADC Memory (ADC_MEM0 - ADC_MEM3, with A12, A10, A5, A3
      * with no repeat) with VCC and VSS reference */
     if(!ADC14_configureMultiSequenceMode(ADC_MEM0, ADC_MEM3, false))
     	return(0);
-    if(!MAP_ADC14_configureConversionMemory(ADC_MEM0,
+    if(!ADC14_configureConversionMemory(ADC_MEM0|ADC_MEM1|ADC_MEM2|ADC_MEM3,
             ADC_VREFPOS_AVCC_VREFNEG_VSS,
             ADC_INPUT_A12, ADC_NONDIFFERENTIAL_INPUTS))
     		return(0);
-    if(!MAP_ADC14_configureConversionMemory(ADC_MEM1,
+/*    if(!MAP_ADC14_configureConversionMemory(ADC_MEM1,
             ADC_VREFPOS_AVCC_VREFNEG_VSS,
             ADC_INPUT_A10, ADC_NONDIFFERENTIAL_INPUTS))
     	return(0);
@@ -424,14 +445,14 @@ int initializeADC(void){
     if(!MAP_ADC14_configureConversionMemory(ADC_MEM3,
             ADC_VREFPOS_AVCC_VREFNEG_VSS,
             ADC_INPUT_A3, ADC_NONDIFFERENTIAL_INPUTS))
-    		return(0);
+    		return(0);*/
 
     /* Enabling the interrupt when a conversion on channel 3 (end of sequence)
      *  is complete and enabling conversions */
-    MAP_ADC14_enableInterrupt(ADC_INT3);
+    ADC14_enableInterrupt(ADC_INT3);
 
     /* Enabling Interrupts */
-    MAP_Interrupt_enableInterrupt(INT_ADC14);
+    Interrupt_enableInterrupt(INT_ADC14);
 
     /* Setting up the sample timer to automatically step through the sequence
      * convert.
@@ -503,7 +524,6 @@ int initializeDDS(void)
 	/* Enable SPI module */
 	MAP_SPI_enableModule(EUSCI_B0_BASE);
 	/* Enabling interrupts */
-	//MAP_SPI_enableInterrupt(EUSCI_B0_BASE, EUSCI_B_SPI_RECEIVE_INTERRUPT);
 	MAP_Interrupt_enableInterrupt(INT_EUSCIB0);
 	MAP_Interrupt_enableSleepOnIsrExit();
 #endif
@@ -651,7 +671,6 @@ void writeVersaClockBlock(const uint8_t *firstDataPtr, uint8_t blockStart, uint8
     //Enable master Transmit interrupt
     I2C_enableInterrupt(EUSCI_B1_BASE, EUSCI_B_I2C_TRANSMIT_INTERRUPT0
     		+ EUSCI_B_I2C_NAK_INTERRUPT);
-    Interrupt_enableInterrupt(INT_EUSCIB1);
 
     I2C_masterSendMultiByteStart(EUSCI_B1_BASE, blockStart); // Send the address.
 }
@@ -662,8 +681,7 @@ int updateVersaclockRegs(long int frequency)
 	volatile int m;
 	static int presentBandIndex=0;
 	frequency = frequency/1000;
-	printf("presentBandIndex is: %d \n",presentBandIndex);
-	printf("frequency is: %d \n",frequency);
+
 	if((versaClockRegisters.frequencyBandLimit[presentBandIndex] <= frequency)&
 			(frequency<versaClockRegisters.frequencyBandLimit[presentBandIndex+1])) return 0;
 	for(i=0;i<NUM_BANDS;i++)
@@ -684,3 +702,4 @@ int updateVersaclockRegs(long int frequency)
 	}
 	return 1;  // We didn't find the band to fit the frequency.  Probably should do something with this error.
 }
+
