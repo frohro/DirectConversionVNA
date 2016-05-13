@@ -331,30 +331,30 @@ int main(void)
     initVersaClock1MHz();
 
     dumpI2C();
-    printf(EUSCI_A0_BASE,"Dumping Versaclock RAM after setting to 1MHz.\n");
-    printf(EUSCI_A0_BASE,"Address   Received    Written");
+    printf("Dumping Versaclock RAM after setting to 1MHz.\n");
+    printf("Address   Received    Written");
     for (i=0x10;i<NUM_OF_REG_BYTES+0x10;i++)
     {
-    	printf(EUSCI_A0_BASE,"%#04x    %#04x       %#04x\n",i,RXData[i],
+    	printf("%x    %x       %x\n",i,RXData[i],
     			versaClockRegisters.init1MHzRegisterValues[i-0x10]);
     	if(RXData[i]!=versaClockRegisters.init1MHzRegisterValues[i-0x10])
-    		printf(EUSCI_A0_BASE,"They don't match!\n");
+    		printf("They don't match!\n");
     }
 
     setDDSFrequency(10000000);
     if(!updateVersaclockRegs(10000000))
-    	printf(EUSCI_A0_BASE,"updateVersaClockRegs failed!\n");
+    	printf("updateVersaClockRegs failed!\n");
     dumpI2C();
 
-    printf(EUSCI_A0_BASE,"Address,  Read,    Tried to Write\n");
+    printf("Address,  Read,    Tried to Write\n");
     for (i=0;i<NUM_OF_CHANGED_REG_BYTES; i++)
     {
-    		printf(EUSCI_A0_BASE,"%#04x       %#04x        %#04x\n",versaClockRegisters.changedAddresses[i],
+    		printf("%x       %x        %x\n",versaClockRegisters.changedAddresses[i],
     				RXData[versaClockRegisters.changedAddresses[i]],
 					versaClockRegisters.registerValues[12][i]);
     		if(RXData[versaClockRegisters.changedAddresses[i]]!=
     				versaClockRegisters.registerValues[12][i])
-    			printf(EUSCI_A0_BASE,"VersaClock Registers did NOT match!\n");
+    			printf("VersaClock Registers did NOT match!\n");
     }
     /* Main while loop */
 	while(1)
@@ -368,11 +368,11 @@ int main(void)
 /* 		for(i=0;i<1000;i++){
 			temp = i*temp;
 		}*/
-		printf(EUSCI_A0_BASE,"\r\n Results are:\r\n");
+		printf("\r\n Results are:\r\n");
 		for(i=0; i<NUM_ADC14_CHANNELS; i++){
 			test[i] = resultsBuffer[i];
-			printf(EUSCI_A0_BASE,"ADC # %d  ",i);
-			printf(EUSCI_A0_BASE,"Result: %d\n",resultsBuffer[i]);
+			printf("ADC # %d  ",i);
+			printf("Result: %d\n",resultsBuffer[i]);
 		}
 		//MAP_PCM_gotoLPM0();
 	}

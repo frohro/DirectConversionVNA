@@ -251,7 +251,7 @@
 						</toolChain>
 					</folderInfo>
 					<sourceEntries>
-						<entry excluding="printf.c|MSP432-printf-master/printf_example.c|printfOverride.c|startup_msp432p401r_gcc.c|msp432p401r.lds|rom" flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name=""/>
+						<entry excluding="MSP432-printf-master|MSP432-printf-master/printf_example.c|printfOverride.c|startup_msp432p401r_gcc.c|msp432p401r.lds|rom" flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name=""/>
 					</sourceEntries>
 				</configuration>
 			</storageModule>
