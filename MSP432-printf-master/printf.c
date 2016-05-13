@@ -82,6 +82,7 @@ void printf(uint32_t moduleInstance, char *format, ...)
 				case 'c':// Char
 					putc(moduleInstance, va_arg(a, char));
 				break;
+				case 'd':
 				case 'i':// 16 bit Integer
 				case 'u':// 16 bit Unsigned
 					i = va_arg(a, int);

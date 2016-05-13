@@ -312,7 +312,7 @@ int main(void)
 	Interrupt_enableMaster();
 
      /* Enabling the FPU for floating point operation */
-/*    while(!initializeDDS())
+    while(!initializeDDS())
     {
     	for(i=0;i<100;i++);  //Wait to try again.
     }
@@ -331,31 +331,31 @@ int main(void)
     initVersaClock1MHz();
 
     dumpI2C();
-    printf("Dumping Versaclock RAM after setting to 1MHz.\n");
-    printf("Address   Received    Written");
+    printf(EUSCI_A0_BASE,"Dumping Versaclock RAM after setting to 1MHz.\n");
+    printf(EUSCI_A0_BASE,"Address   Received    Written");
     for (i=0x10;i<NUM_OF_REG_BYTES+0x10;i++)
     {
-    	printf("%#04x    %#04x       %#04x\n",i,RXData[i],
+    	printf(EUSCI_A0_BASE,"%#04x    %#04x       %#04x\n",i,RXData[i],
     			versaClockRegisters.init1MHzRegisterValues[i-0x10]);
     	if(RXData[i]!=versaClockRegisters.init1MHzRegisterValues[i-0x10])
-    		printf("They don't match!\n");
+    		printf(EUSCI_A0_BASE,"They don't match!\n");
     }
 
     setDDSFrequency(10000000);
     if(!updateVersaclockRegs(10000000))
-    	printf("updateVersaClockRegs failed!\n");
+    	printf(EUSCI_A0_BASE,"updateVersaClockRegs failed!\n");
     dumpI2C();
 
-    printf("Address,  Read,    Tried to Write\n");
+    printf(EUSCI_A0_BASE,"Address,  Read,    Tried to Write\n");
     for (i=0;i<NUM_OF_CHANGED_REG_BYTES; i++)
     {
-    		printf("%#04x       %#04x        %#04x\n",versaClockRegisters.changedAddresses[i],
+    		printf(EUSCI_A0_BASE,"%#04x       %#04x        %#04x\n",versaClockRegisters.changedAddresses[i],
     				RXData[versaClockRegisters.changedAddresses[i]],
 					versaClockRegisters.registerValues[12][i]);
     		if(RXData[versaClockRegisters.changedAddresses[i]]!=
     				versaClockRegisters.registerValues[12][i])
-    			printf("VersaClock Registers did NOT match!\n");
-    }*/
+    			printf(EUSCI_A0_BASE,"VersaClock Registers did NOT match!\n");
+    }
     /* Main while loop */
 	while(1)
 	{
