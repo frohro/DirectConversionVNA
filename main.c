@@ -321,8 +321,8 @@ int main(void)
     /* Halting WDT  */
     MAP_WDT_A_holdTimer();
 
-/*    MAP_FPU_enableModule();
-    MAP_FPU_enableLazyStacking();*/
+    MAP_FPU_enableModule();
+    MAP_FPU_enableLazyStacking();
 /*
     FPU_disableModule();
     FPU_disableStacking();
@@ -362,7 +362,7 @@ int main(void)
     setDDSFrequency(1000000); // Test the DDS out.
     initVersaClock1MHz();
 
-   /* dumpI2C();
+    dumpI2C();
     printf("Dumping Versaclock RAM after setting to 1MHz.\n");
     printf("Address   Received    Written");
     for (i=0x10;i<NUM_OF_REG_BYTES+0x10;i++)
@@ -387,7 +387,7 @@ int main(void)
     		if(i2cRXData[versaClockRegisters.changedAddresses[i]]!=
     				versaClockRegisters.registerValues[12][i])
     			printf("VersaClock Registers did NOT match!\n");
-    }*/
+    }
     /*		Pulse the start of a conversion.	*/
 
     /*    while(!MAP_ADC14_toggleConversionTrigger()){
@@ -551,7 +551,7 @@ void pulse_W_CLK(void)
 
 void pulse_DDS_RST(void)
 {
-	MAP_GPIO_setOutputHighOnPin(GPIO_PORT_P4, GPIO_PIN7);
+	GPIO_setOutputHighOnPin(GPIO_PORT_P4, GPIO_PIN7);
 	MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P4, GPIO_PIN7);
 
 }
@@ -717,7 +717,6 @@ void dumpI2C(void)
  */
 void initVersaClock1MHz(void)
 {
-    //TXData = versaClockRegisters.init1MHzRegisterValues;
 	writeVersaClockBlock(versaClockRegisters.init1MHzRegisterValues, firstReg, NUM_OF_REG_BYTES);
 }
 
@@ -753,7 +752,7 @@ int updateVersaclockRegs(long int frequency)
 	frequency = frequency/1000;
 
 	if((versaClockRegisters.frequencyBandLimit[presentBandIndex] <= frequency)&
-			(frequency<versaClockRegisters.frequencyBandLimit[presentBandIndex+1])) return 0;
+			(frequency<versaClockRegisters.frequencyBandLimit[presentBandIndex+1])) return 1;
 	for(i=0;i<NUM_BANDS;i++)
 	{
 		if((versaClockRegisters.frequencyBandLimit[i] <= frequency)&
@@ -770,7 +769,7 @@ int updateVersaclockRegs(long int frequency)
 			}
 		}
 	}
-	return 1;  // We didn't find the band to fit the frequency.  Probably should do something with this error.
+	return 1;
 }
 
 /* Measure the reflection coefficient at numPts between fMin and fMax. */
