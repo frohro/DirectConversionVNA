@@ -14,27 +14,38 @@
 /* Standard Includes */
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include <string.h>
 #include "printf.h"
 #include <math.h>
 
 
-/* Global variables */
+/* Globals */
 
-/* I2C Variables */
+/* I2C constants */
 #define SLAVE_ADDRESS       0x06a // Primary address 0x6a works for 0xd4
 #define NUM_OF_REG_BYTES 0x6a-0x10
 #define NUM_OF_CHANGED_REG_BYTES 10
 #define NUM_BANDS 25
 #define NUM_BAND_BLOCKS 4
 #define FIRST_REG 0x10
-
+/* UART constants */
+#define REFLECTION_MODE 0
+#define TRANSMISSION_MODE 1
+#define DDS_RATIO 10737.41824 /* The tuning word conversion for the miniVNA that uses
+						a 400MHz 32 bit DDS.  We need to divide by this to
+						get what the frequency the miniVNA is trying to tell
+						us. */
+/* ADC14 constants */
 #define NUM_ADC14_CHANNELS 4
+/* Other constants */
+#define PI atan(1.0)
+#define TO_DEGREES 180/PI
 
 const uint8_t firstReg = FIRST_REG;
 static uint8_t TXByteCtr;
-static uint8_t RXData[NUM_OF_REG_BYTES+0x10];
+static uint8_t i2cRXData[NUM_OF_REG_BYTES+0x10];
 const static volatile uint8_t *TXData;
 static volatile uint32_t xferIndex;
 static volatile bool justSending;
@@ -134,6 +145,8 @@ const eUSCI_UART_Config uartConfig =
         EUSCI_A_UART_MODE,                       // UART mode
         EUSCI_A_UART_LOW_FREQUENCY_BAUDRATE_GENERATION  // Low Frequency Mode
 };
+char uartRXData[80];
+static bool uartEndOfLineFlag = false;
 
 #ifdef USE_SPI
 /* SPI Master Configuration Parameter */
@@ -171,6 +184,8 @@ void pulseFQ_UD(void);
 void pulse_W_CLK(void);
 void pulse_DDS_RST(void);
 void initI2C(void);
+void reflectionMeasure(int fMin,int fMax,int numPts);
+void transmissionMeasure(int fMin,int fMax,int numPts);
 
 
 /*
@@ -179,11 +194,28 @@ void initI2C(void);
  */
 void EusciA0_ISR(void)
 {
-    int receiveByte = UCA0RXBUF;
-    MAP_GPIO_setOutputHighOnPin(GPIO_PORT_P1, GPIO_PIN0);
+    //int receiveByte = UCA0RXBUF;
+    static int i=0;
+	uint32_t status = UART_getEnabledInterruptStatus(EUSCI_A0_BASE);
+
+    UART_clearInterruptFlag(EUSCI_A0_BASE, status);
+
+    if(status & EUSCI_A_UART_RECEIVE_INTERRUPT)
+    {
+        uartRXData[i] = UART_receiveData(EUSCI_A0_BASE);
+        if(uartRXData[i++]==0x0d)
+        {
+        	uartEndOfLineFlag = true;
+        	uartRXData[i] = 0;  // To end the array.
+        }
+    	//MAP_UART_transmitData(EUSCI_A0_BASE, UART_receiveData(EUSCI_A0_BASE));
+    }
+    else if(status & EUSCI_A_UART_TRANSMIT_INTERRUPT)
+    {
+    	/* Not sure we need this. */
+    }
     /* Echo back. */
-    MAP_UART_transmitData(EUSCI_A0_BASE, receiveByte);
-    MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P1, GPIO_PIN0);
+   // MAP_UART_transmitData(EUSCI_A0_BASE, receiveByte);
 }
 
 /*
@@ -263,11 +295,11 @@ void EUSCIB1_IRQHandler(void)
 			if(xferIndex == NUM_OF_REG_BYTES+0x10 - 2)
 			{
 				I2C_masterReceiveMultiByteStop(EUSCI_B1_BASE);
-				RXData[xferIndex++] = I2C_masterReceiveMultiByteNext(EUSCI_B1_BASE);
+				i2cRXData[xferIndex++] = I2C_masterReceiveMultiByteNext(EUSCI_B1_BASE);
 			}
 			else if(xferIndex == NUM_OF_REG_BYTES+0x10 - 1)
 			{
-				RXData[xferIndex] = I2C_masterReceiveMultiByteNext(EUSCI_B1_BASE);
+				i2cRXData[xferIndex] = I2C_masterReceiveMultiByteNext(EUSCI_B1_BASE);
 				I2C_disableInterrupt(EUSCI_B1_BASE, EUSCI_B_I2C_RECEIVE_INTERRUPT0);
 				I2C_setMode(EUSCI_B1_BASE, EUSCI_B_I2C_TRANSMIT_MODE);
 				xferIndex = 0;
@@ -276,7 +308,7 @@ void EUSCIB1_IRQHandler(void)
 			}
 			else
 			{
-				RXData[xferIndex++] = I2C_masterReceiveMultiByteNext(EUSCI_B1_BASE);
+				i2cRXData[xferIndex++] = I2C_masterReceiveMultiByteNext(EUSCI_B1_BASE);
 			}
 		}
 	}
@@ -284,7 +316,7 @@ void EUSCIB1_IRQHandler(void)
 
 int main(void)
 {
-	volatile int i, j, temp;
+	volatile int i, j, temp, commandData, vnaMode, fMin, fMax, numPts, commandLine =0;
 	volatile uint16_t test[NUM_ADC14_CHANNELS];
     /* Halting WDT  */
     MAP_WDT_A_holdTimer();
@@ -330,14 +362,14 @@ int main(void)
     setDDSFrequency(1000000); // Test the DDS out.
     initVersaClock1MHz();
 
-    dumpI2C();
+   /* dumpI2C();
     printf("Dumping Versaclock RAM after setting to 1MHz.\n");
     printf("Address   Received    Written");
     for (i=0x10;i<NUM_OF_REG_BYTES+0x10;i++)
     {
-    	printf("%x    %x       %x\n",i,RXData[i],
+    	printf("%x    %x       %x\n",i,i2cRXData[i],
     			versaClockRegisters.init1MHzRegisterValues[i-0x10]);
-    	if(RXData[i]!=versaClockRegisters.init1MHzRegisterValues[i-0x10])
+    	if(i2cRXData[i]!=versaClockRegisters.init1MHzRegisterValues[i-0x10])
     		printf("They don't match!\n");
     }
 
@@ -350,31 +382,65 @@ int main(void)
     for (i=0;i<NUM_OF_CHANGED_REG_BYTES; i++)
     {
     		printf("%x       %x        %x\n",versaClockRegisters.changedAddresses[i],
-    				RXData[versaClockRegisters.changedAddresses[i]],
+    				i2cRXData[versaClockRegisters.changedAddresses[i]],
 					versaClockRegisters.registerValues[12][i]);
-    		if(RXData[versaClockRegisters.changedAddresses[i]]!=
+    		if(i2cRXData[versaClockRegisters.changedAddresses[i]]!=
     				versaClockRegisters.registerValues[12][i])
     			printf("VersaClock Registers did NOT match!\n");
+    }*/
+    /*		Pulse the start of a conversion.	*/
+
+    /*    while(!MAP_ADC14_toggleConversionTrigger()){
+    	for(i=0;i<100;i++);  // Wait for conversion to finish.
     }
+
+ 		for(i=0;i<1000;i++){
+    			temp = i*temp;
+    		}*/
+    /*		printf("\r\n Results are:\r\n");*/
+    /*r(i=0; i<NUM_ADC14_CHANNELS; i++){
+    				printf("ADC # %d  ",i);
+    			printf("Result: %d\n",resultsBuffer[i]);
+    }*/
+    //MAP_PCM_gotoLPM0();
     /* Main while loop */
 	while(1)
 	{
-/*		Pulse the start of a conversion.	*/
-
-		while(!MAP_ADC14_toggleConversionTrigger()){
-			for(i=0;i<100;i++);  // Wait for conversion to finish.
+		if(uartEndOfLineFlag)  /* Parse this command line. */
+		{
+			commandData = atoi(uartRXData);
+			switch(commandLine)
+			{
+			case 0:
+				if((commandData = 0)|(commandData = 1))
+				{
+					vnaMode = commandData;
+					commandLine++;
+				}
+				else
+				{
+					/* Error occurred, something sent unexpected. */
+				}
+				break;
+			case 1:
+				fMin = commandData/DDS_RATIO;
+				commandLine++;
+				break;
+			case 2:
+				numPts = commandData;
+				commandLine++;
+			case 3:
+				fMax = commandData/DDS_RATIO;
+				commandLine =0;
+				if(vnaMode==REFLECTION_MODE)
+					reflectionMeasure(fMin,fMax,numPts);
+				else
+					transmissionMeasure(fMin,fMax,numPts);
+			default:
+				/* Don't expect to be here.  */
+				break;
+			}
 		}
-
-/* 		for(i=0;i<1000;i++){
-			temp = i*temp;
-		}*/
-		printf("\r\n Results are:\r\n");
-		for(i=0; i<NUM_ADC14_CHANNELS; i++){
-			test[i] = resultsBuffer[i];
-			printf("ADC # %d  ",i);
-			printf("Result: %d\n",resultsBuffer[i]);
-		}
-		//MAP_PCM_gotoLPM0();
 	}
 }
 
@@ -405,7 +471,8 @@ int initializeBackChannelUART(void){
     /* Enable UART interrupts for backchannel UART
      * We may or may not need to do this.  The simple
      * printf() routine doesn't seem to use it.  */
-    //UART_enableInterrupt(EUSCI_A0_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
+    UART_enableInterrupt(EUSCI_A0_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
+    		/*EUSCI_A_SPI_TRANSMIT_INTERRUPT);*/
     Interrupt_enableInterrupt(INT_EUSCIA0);
     return 1;
 }
@@ -417,10 +484,12 @@ int initializeADC(void){
             ADC_NOROUTE);
 
     /* Configuring GPIOs for Analog In
-     * Pin 4.1 is S21_Q, A12
-     * Pin 4.3 is S21_I, A10
-     * Pin 5.0 is S21_I, A5
-     * Pin 5.1 is S21_Q, A3  */
+
+     * Pin 5.0 is S11_I, A5  resultsBuffer[0]
+     * Pin 5.1 is S11_Q, A3  resultsBuffer[1]
+     * Pin 4.3 is S21_I, A10 resultsBuffer[2]
+     * Pin 4.1 is S21_Q, A12 resultsBuffer[3] */
+
     GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P5,
              GPIO_PIN1| GPIO_PIN0, GPIO_TERTIARY_MODULE_FUNCTION);
     GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
@@ -430,22 +499,23 @@ int initializeADC(void){
      * with no repeat) with VCC and VSS reference */
     if(!ADC14_configureMultiSequenceMode(ADC_MEM0, ADC_MEM3, false))
     	return(0);
-    if(!ADC14_configureConversionMemory(ADC_MEM0|ADC_MEM1|ADC_MEM2|ADC_MEM3,
-            ADC_VREFPOS_AVCC_VREFNEG_VSS,
-            ADC_INPUT_A12, ADC_NONDIFFERENTIAL_INPUTS))
-    		return(0);
-/*    if(!MAP_ADC14_configureConversionMemory(ADC_MEM1,
-            ADC_VREFPOS_AVCC_VREFNEG_VSS,
-            ADC_INPUT_A10, ADC_NONDIFFERENTIAL_INPUTS))
+
+    if(!ADC14_configureConversionMemory(ADC_MEM0,
+            	ADC_VREFPOS_AVCC_VREFNEG_VSS,
+				ADC_INPUT_A5, ADC_NONDIFFERENTIAL_INPUTS))
     	return(0);
-    if(!MAP_ADC14_configureConversionMemory(ADC_MEM2,
-            ADC_VREFPOS_AVCC_VREFNEG_VSS,
-            ADC_INPUT_A5, ADC_NONDIFFERENTIAL_INPUTS))
-    		return(0);
-    if(!MAP_ADC14_configureConversionMemory(ADC_MEM3,
-            ADC_VREFPOS_AVCC_VREFNEG_VSS,
-            ADC_INPUT_A3, ADC_NONDIFFERENTIAL_INPUTS))
-    		return(0);*/
+    if(!ADC14_configureConversionMemory(ADC_MEM1,
+                ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                ADC_INPUT_A3, ADC_NONDIFFERENTIAL_INPUTS))
+        return(0);
+    if(!ADC14_configureConversionMemory(ADC_MEM2,
+                ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                ADC_INPUT_A10, ADC_NONDIFFERENTIAL_INPUTS))
+        		return(0);
+    if(!ADC14_configureConversionMemory(ADC_MEM3,
+                ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                ADC_INPUT_A12, ADC_NONDIFFERENTIAL_INPUTS))
+        return(0);
 
     /* Enabling the interrupt when a conversion on channel 3 (end of sequence)
      *  is complete and enabling conversions */
@@ -590,7 +660,7 @@ int initializeI2C(void)
     MAP_GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P6,
             GPIO_PIN5 + GPIO_PIN4, GPIO_PRIMARY_MODULE_FUNCTION);
 
-    memset(RXData, 0x00, NUM_OF_REG_BYTES+0x10); // Start with 0 so we can see the changes.
+    memset(i2cRXData, 0x00, NUM_OF_REG_BYTES+0x10); // Start with 0 so we can see the changes.
 
     /* Initializing I2C Master to parameters in i2cConfig */
     I2C_initMaster(EUSCI_B1_BASE, &i2cConfig);
@@ -703,3 +773,57 @@ int updateVersaclockRegs(long int frequency)
 	return 1;  // We didn't find the band to fit the frequency.  Probably should do something with this error.
 }
 
+/* Measure the reflection coefficient at numPts between fMin and fMax. */
+void reflectionMeasure(int fMin,int fMax,int numPts)
+{
+	int i;
+	int f = fMin;
+	int deltaF = (fMax-fMin)/numPts;
+	float s11R, s11I, s11M, s11A;
+	for(i=0;i<numPts;i++)
+	{
+		/* Set oscillators */
+		setDDSFrequency((long long)f);
+		updateVersaclockRegs(f);
+		f+=deltaF;
+		/* measure ADC14 */
+		while(!MAP_ADC14_toggleConversionTrigger())
+		{
+		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
+		}
+		s11R = (float)resultsBuffer[0];
+		s11I = (float)resultsBuffer[1];
+		s11M = sqrt(s11R*s11R+s11I*s11I);
+		s11A = atan2(s11I,s11R)*TO_DEGREES;
+		printf("%f,%c,%f,%c",s11M,0x0d,s11A,0x0d); // Don't think this format is right.
+		// Waiting to hear from Dan Toma, YO3GGX.
+	}
+
+}
+
+/* Measure the reflection coefficient at numPts between fMin and fMax. */
+void transmissionMeasure(int fMin,int fMax,int numPts)
+{
+	int i;
+	int f = fMin;
+	int deltaF = (fMax-fMin)/numPts;
+	double s21R, s21I, s21M, s21A;
+	for(i=0;i<numPts;i++)
+	{
+		/* Set oscillators */
+		setDDSFrequency((long long)f);/* Measure the reflection coefficient at numPts between fMin and fMax. */
+		updateVersaclockRegs(f);
+		f+=deltaF;
+		/* measure ADC14 */
+		while(!MAP_ADC14_toggleConversionTrigger())
+		{
+		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
+		}
+		s21R = (double)resultsBuffer[2];
+		s21I = (double)resultsBuffer[3];
+		s21M = sqrt(s21R*s21R+s21I*s21I);
+		s21A = atan2(s21I,s21R)*(double)TO_DEGREES;
+		printf("%f,%c,%f,%c",s21M,0x0d,s21A,0x0d);
+	}
+
+}
