@@ -39,6 +39,7 @@
 						us. */
 /* ADC14 constants */
 #define NUM_ADC14_CHANNELS 4
+#define VREF ADC_VREFPOS_AVCC_VREFNEG_VSS
 /* Other constants */
 #define PI atan(1.0)
 #define TO_DEGREES 180/PI
@@ -412,7 +413,7 @@ int main(void)
 			switch(commandLine)
 			{
 			case 0:
-				if((commandData = 0)|(commandData = 1))
+				if((commandData == 0)||(commandData == 1))
 				{
 					vnaMode = commandData;
 					commandLine++;
@@ -501,19 +502,19 @@ int initializeADC(void){
     	return(0);
 
     if(!ADC14_configureConversionMemory(ADC_MEM0,
-            	ADC_VREFPOS_AVCC_VREFNEG_VSS,
+            	VREF,
 				ADC_INPUT_A5, ADC_NONDIFFERENTIAL_INPUTS))
     	return(0);
     if(!ADC14_configureConversionMemory(ADC_MEM1,
-                ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                VREF,
                 ADC_INPUT_A3, ADC_NONDIFFERENTIAL_INPUTS))
         return(0);
     if(!ADC14_configureConversionMemory(ADC_MEM2,
-                ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                VREF,
                 ADC_INPUT_A10, ADC_NONDIFFERENTIAL_INPUTS))
         		return(0);
     if(!ADC14_configureConversionMemory(ADC_MEM3,
-                ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                VREF,
                 ADC_INPUT_A12, ADC_NONDIFFERENTIAL_INPUTS))
         return(0);
 
@@ -611,7 +612,7 @@ int setDDSFrequency(long long frequency)
 	 */
 	int i;
 	unsigned long long tuning_word = roundl((frequency << 32) / 180000000);
-	if((frequency<1000000)|(frequency>70000000)) return 1; // Frequency out of range.
+	if((frequency<1000000)||(frequency>70000000)) return 1; // Frequency out of range.
 #ifdef USE_SPI
 	for (i=0;i<4;i++,tuning_word >>=8) // Send the frequency words
 	{
@@ -691,7 +692,7 @@ int initializeI2C(void)
 void dumpI2C(void)
 {
     /* Making sure the last transaction has been completely sent out */
-    while ((I2C_masterIsStopSent(EUSCI_B1_BASE) == EUSCI_B_I2C_SENDING_STOP)|
+    while ((I2C_masterIsStopSent(EUSCI_B1_BASE) == EUSCI_B_I2C_SENDING_STOP)||
     		(TXByteCtr!=0));
 
 	justSending=false;  // We want to receive data back.
@@ -778,7 +779,8 @@ void reflectionMeasure(int fMin,int fMax,int numPts)
 	int i;
 	int f = fMin;
 	int deltaF = (fMax-fMin)/numPts;
-	float s11R, s11I, s11M, s11A;
+	int16_t s11R, s11I;
+	uint8_t s11RH,s11RL,s11IH,s11IL;
 	for(i=0;i<numPts;i++)
 	{
 		/* Set oscillators */
@@ -790,27 +792,30 @@ void reflectionMeasure(int fMin,int fMax,int numPts)
 		{
 		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
 		}
-		s11R = (float)resultsBuffer[0];
-		s11I = (float)resultsBuffer[1];
-		s11M = sqrt(s11R*s11R+s11I*s11I);
-		s11A = atan2(s11I,s11R)*TO_DEGREES;
-		printf("%f,%c,%f,%c",s11M,0x0d,s11A,0x0d); // Don't think this format is right.
-		// Waiting to hear from Dan Toma, YO3GGX.
+		s11R = (resultsBuffer[0]-8192)*4;
+		s11I = (resultsBuffer[1]-8192)*4;
+		s11RH = (uint8_t)((s11R & 0xff00)>>8);
+		s11RL = (uint8_t)(s11R & 0x00ff);
+		printf("%c,%c",s11RL,s11RH);
+		s11RH = (uint8_t)((s11I & 0xff00)>>8);
+		s11RL = (uint8_t)(s11I & 0x00ff);
+		printf("%c,%c",s11IL,s11IH);
 	}
 
 }
 
-/* Measure the reflection coefficient at numPts between fMin and fMax. */
+/* Measure the transmission coefficient at numPts between fMin and fMax. */
 void transmissionMeasure(int fMin,int fMax,int numPts)
 {
 	int i;
 	int f = fMin;
 	int deltaF = (fMax-fMin)/numPts;
-	double s21R, s21I, s21M, s21A;
+	int16_t s21R, s21I;
+	uint8_t s21RH,s21RL,s21IH,s21IL;
 	for(i=0;i<numPts;i++)
 	{
 		/* Set oscillators */
-		setDDSFrequency((long long)f);/* Measure the reflection coefficient at numPts between fMin and fMax. */
+		setDDSFrequency((long long)f);
 		updateVersaclockRegs(f);
 		f+=deltaF;
 		/* measure ADC14 */
@@ -818,11 +823,14 @@ void transmissionMeasure(int fMin,int fMax,int numPts)
 		{
 		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
 		}
-		s21R = (double)resultsBuffer[2];
-		s21I = (double)resultsBuffer[3];
-		s21M = sqrt(s21R*s21R+s21I*s21I);
-		s21A = atan2(s21I,s21R)*(double)TO_DEGREES;
-		printf("%f,%c,%f,%c",s21M,0x0d,s21A,0x0d);
+		s21R = (resultsBuffer[2]-8192)*4;
+		s21I = (resultsBuffer[3]-8192)*4;
+		s21RH = (uint8_t)((s21R & 0xff00)>>8);
+		s21RL = (uint8_t)(s21R & 0x00ff);
+		printf("%c,%c",s21RL,s21RH);
+		s21RH = (uint8_t)((s21I & 0xff00)>>8);
+		s21RL = (uint8_t)(s21I & 0x00ff);
+		printf("%c,%c",s21IL,s21IH);
 	}
 
 }
