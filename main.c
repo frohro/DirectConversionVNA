@@ -147,7 +147,7 @@ const eUSCI_UART_Config uartConfig =
         EUSCI_A_UART_LOW_FREQUENCY_BAUDRATE_GENERATION  // Low Frequency Mode
 };
 char uartRXData[80];
-static bool uartEndOfLineFlag = false;
+static int uartEndOfLineFlag = 0;
 
 #ifdef USE_SPI
 /* SPI Master Configuration Parameter */
@@ -184,7 +184,6 @@ int setDDSFrequency(long long frequency);
 void pulseFQ_UD(void);
 void pulse_W_CLK(void);
 void pulse_DDS_RST(void);
-void initI2C(void);
 void reflectionMeasure(int fMin,int fMax,int numPts);
 void transmissionMeasure(int fMin,int fMax,int numPts);
 
@@ -204,10 +203,14 @@ void EusciA0_ISR(void)
     if(status & EUSCI_A_UART_RECEIVE_INTERRUPT)
     {
         uartRXData[i] = UART_receiveData(EUSCI_A0_BASE);
+        printf("i, uartRXData[i] %d, %x \n",i,uartRXData[i]);
         if(uartRXData[i++]==0x0d)
         {
-        	uartEndOfLineFlag = true;
-        	uartRXData[i] = 0;  // To end the array.
+        	printf("Got 0x0d in ISR.\n");
+        	uartEndOfLineFlag = 1;
+        	uartRXData[--i] = 0;  // To end the array replace 0x0d with 0.
+        	printf("i is: %d and strlen(uartRXData) is: %d\n",i,strlen(uartRXData));
+        	i=0;
         }
     	//MAP_UART_transmitData(EUSCI_A0_BASE, UART_receiveData(EUSCI_A0_BASE));
     }
@@ -227,14 +230,81 @@ void EusciA0_ISR(void)
 void ADC14_IRQHandler(void)
 {
     uint64_t status;
-    status = ADC14_getEnabledInterruptStatus();
-    ADC14_clearInterruptFlag(status);
+    status = MAP_ADC14_getEnabledInterruptStatus();
+    MAP_ADC14_clearInterruptFlag(status);
 
     if(status & ADC_INT3)
     {
-        ADC14_getMultiSequenceResult(resultsBuffer);
+        MAP_ADC14_getMultiSequenceResult(resultsBuffer);
     }
 }
+
+int initializeADC(void){
+    /* Initializing ADC (MCLK/1/1) */
+    /* Setting reference voltage to 2.5  and enabling reference */
+    MAP_REF_A_setReferenceVoltage(REF_A_VREF2_5V);
+    MAP_REF_A_enableReferenceVoltage();
+
+    MAP_ADC14_enableModule();
+    MAP_ADC14_initModule(ADC_CLOCKSOURCE_MCLK, ADC_PREDIVIDER_1, ADC_DIVIDER_1,
+            ADC_NOROUTE);
+
+    /* Configuring GPIOs for Analog In
+
+     * Pin 5.0 is S11_I, A5  resultsBuffer[0]
+     * Pin 5.1 is S11_Q, A3  resultsBuffer[1]
+     * Pin 4.3 is S21_I, A10 resultsBuffer[2]
+     * Pin 4.1 is S21_Q, A12 resultsBuffer[3] */
+
+    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P5,
+             GPIO_PIN2| GPIO_PIN0, GPIO_TERTIARY_MODULE_FUNCTION);
+    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
+            GPIO_PIN3 | GPIO_PIN1, GPIO_TERTIARY_MODULE_FUNCTION);
+
+    /* Configuring ADC Memory (ADC_MEM0 - ADC_MEM3, with A12, A10, A5, A3
+     * with no repeat) with VCC and VSS reference */
+    if(!MAP_ADC14_configureMultiSequenceMode(ADC_MEM0, ADC_MEM3, false))
+    	return(0);
+
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM0,
+            	ADC_VREFPOS_AVCC_VREFNEG_VSS,
+				ADC_INPUT_A5, ADC_NONDIFFERENTIAL_INPUTS))
+    	return(0);
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM1,
+    		ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                ADC_INPUT_A3, ADC_NONDIFFERENTIAL_INPUTS))
+        return(0);
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM2,
+    		ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                ADC_INPUT_A10, ADC_NONDIFFERENTIAL_INPUTS))
+        		return(0);
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM3,
+    		ADC_VREFPOS_AVCC_VREFNEG_VSS,
+                ADC_INPUT_A12, ADC_NONDIFFERENTIAL_INPUTS))
+        return(0);
+
+    MAP_ADC14_setSampleHoldTime(ADC_PULSE_WIDTH_192,ADC_PULSE_WIDTH_192);
+    /* Enabling the interrupt when a conversion on channel 3 (end of sequence)
+     *  is complete and enabling conversions */
+    MAP_ADC14_enableInterrupt(ADC_INT3);
+
+
+    /* Enabling Interrupts */
+    Interrupt_enableInterrupt(INT_ADC14);
+
+    /* Setting up the sample timer to automatically step through the sequence
+     * convert.
+     */
+    if(!MAP_ADC14_enableSampleTimer(ADC_AUTOMATIC_ITERATION))
+    		return 0;
+
+    /* Enable conversion */
+    if(!MAP_ADC14_enableConversion())
+    	return 0;
+
+    return 1;
+}
+
 
 /*
  * eUSCIB0 ISR.
@@ -317,7 +387,8 @@ void EUSCIB1_IRQHandler(void)
 
 int main(void)
 {
-	volatile int i, j, temp, commandData, vnaMode, fMin, fMax, numPts, commandLine =0;
+	volatile int i, j, temp;
+	static int commandLine =0, commandData, vnaMode, fMin, fMax, numPts;
 	volatile uint16_t test[NUM_ADC14_CHANNELS];
     /* Halting WDT  */
     MAP_WDT_A_holdTimer();
@@ -329,7 +400,7 @@ int main(void)
     FPU_disableStacking();
 */
 
-    //MAP_Interrupt_enableSleepOnIsrExit();
+    MAP_Interrupt_enableSleepOnIsrExit();
 
 
     while(!initializeBackChannelUART())
@@ -359,8 +430,9 @@ int main(void)
     {
     	for(i=0;i<100;i++);  //Wait to try again.
     }
+    printf("Starting up!\n");
 
-    setDDSFrequency(1000000); // Test the DDS out.
+   /* setDDSFrequency(1000000); // Test the DDS out.
     initVersaClock1MHz();
 
     dumpI2C();
@@ -388,59 +460,77 @@ int main(void)
     		if(i2cRXData[versaClockRegisters.changedAddresses[i]]!=
     				versaClockRegisters.registerValues[12][i])
     			printf("VersaClock Registers did NOT match!\n");
-    }
-    /*		Pulse the start of a conversion.	*/
+    }*/
+    /*while(1)
+    {
+    			//Pulse the start of a conversion.
+    	ADC14_enableConversion();
+    	while(!ADC14_toggleConversionTrigger()){
+    		for(i=0;i<100;i++);  // Wait for conversion to finish.
+    	}
 
-    /*    while(!MAP_ADC14_toggleConversionTrigger()){
-    	for(i=0;i<100;i++);  // Wait for conversion to finish.
-    }
+    	for(i=0;i<100000;i++){
+    		temp = i*temp;
+    	}
+		printf("\r\n Results are:\r\n");
 
- 		for(i=0;i<1000;i++){
-    			temp = i*temp;
-    		}*/
-    /*		printf("\r\n Results are:\r\n");*/
-    /*r(i=0; i<NUM_ADC14_CHANNELS; i++){
-    				printf("ADC # %d  ",i);
-    			printf("Result: %d\n",resultsBuffer[i]);
+    	for(i=0; i<NUM_ADC14_CHANNELS; i++){
+    		printf("ADC # %d  ",i);
+    		printf("Result: %d\n",resultsBuffer[i]);
+    	}
     }*/
     //MAP_PCM_gotoLPM0();
     /* Main while loop */
 	while(1)
 	{
-		if(uartEndOfLineFlag)  /* Parse this command line. */
+		if(uartEndOfLineFlag == 1) printf("uartEndofLine = 1\n");
+		if(uartEndOfLineFlag == 1)   // Parse this command line.
 		{
 			commandData = atoi(uartRXData);
+			printf("commandData is:  %d\n",commandData);
+			printf("commandLine is:  %d\n",commandLine);
 			switch(commandLine)
 			{
 			case 0:
-				if((commandData == 0)||(commandData == 1))
+				printf("uartRXData[0] is: %x\n",uartRXData[0]);
+				printf("uartRXData[1] is: %x\n",uartRXData[1]);
+				if(((uartRXData[0] == '0')||(uartRXData[0] == '1'))
+						&&(strlen(uartRXData) == 1))
 				{
 					vnaMode = commandData;
 					commandLine++;
+					printf("Got a 0 for reflection mode!\n");
 				}
 				else
 				{
-					/* Error occurred, something sent unexpected. */
+					 //Error occurred, something sent unexpected.
 				}
 				break;
 			case 1:
-				fMin = commandData/DDS_RATIO;
+				fMin = commandData;
+				printf("got fMin as %d",fMin);
 				commandLine++;
 				break;
 			case 2:
 				numPts = commandData;
+				printf("got nPts as: %d\n",numPts);
 				commandLine++;
+				break;
 			case 3:
-				fMax = commandData/DDS_RATIO;
+				fMax = commandData;
+				printf("got fMax as: %d\n",fMax);
 				commandLine =0;
 				if(vnaMode==REFLECTION_MODE)
 					reflectionMeasure(fMin,fMax,numPts);
 				else
 					transmissionMeasure(fMin,fMax,numPts);
+				break;
 			default:
-				/* Don't expect to be here.  */
+				 // Don't expect to be here.
+				printf("Error occurred:  We didn't parse the command right!\n");
 				break;
 			}
+			uartEndOfLineFlag = 0;
 		}
 	}
 }
@@ -475,66 +565,6 @@ int initializeBackChannelUART(void){
     UART_enableInterrupt(EUSCI_A0_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
     		/*EUSCI_A_SPI_TRANSMIT_INTERRUPT);*/
     Interrupt_enableInterrupt(INT_EUSCIA0);
-    return 1;
-}
-
-int initializeADC(void){
-    /* Initializing ADC (MCLK/1/1) */
-    ADC14_enableModule();
-    ADC14_initModule(ADC_CLOCKSOURCE_MCLK, ADC_PREDIVIDER_1, ADC_DIVIDER_1,
-            ADC_NOROUTE);
-
-    /* Configuring GPIOs for Analog In
-
-     * Pin 5.0 is S11_I, A5  resultsBuffer[0]
-     * Pin 5.1 is S11_Q, A3  resultsBuffer[1]
-     * Pin 4.3 is S21_I, A10 resultsBuffer[2]
-     * Pin 4.1 is S21_Q, A12 resultsBuffer[3] */
-
-    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P5,
-             GPIO_PIN1| GPIO_PIN0, GPIO_TERTIARY_MODULE_FUNCTION);
-    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
-            GPIO_PIN1 | GPIO_PIN3, GPIO_TERTIARY_MODULE_FUNCTION);
-
-    /* Configuring ADC Memory (ADC_MEM0 - ADC_MEM3, with A12, A10, A5, A3
-     * with no repeat) with VCC and VSS reference */
-    if(!ADC14_configureMultiSequenceMode(ADC_MEM0, ADC_MEM3, false))
-    	return(0);
-
-    if(!ADC14_configureConversionMemory(ADC_MEM0,
-            	VREF,
-				ADC_INPUT_A5, ADC_NONDIFFERENTIAL_INPUTS))
-    	return(0);
-    if(!ADC14_configureConversionMemory(ADC_MEM1,
-                VREF,
-                ADC_INPUT_A3, ADC_NONDIFFERENTIAL_INPUTS))
-        return(0);
-    if(!ADC14_configureConversionMemory(ADC_MEM2,
-                VREF,
-                ADC_INPUT_A10, ADC_NONDIFFERENTIAL_INPUTS))
-        		return(0);
-    if(!ADC14_configureConversionMemory(ADC_MEM3,
-                VREF,
-                ADC_INPUT_A12, ADC_NONDIFFERENTIAL_INPUTS))
-        return(0);
-
-    /* Enabling the interrupt when a conversion on channel 3 (end of sequence)
-     *  is complete and enabling conversions */
-    ADC14_enableInterrupt(ADC_INT3);
-
-    /* Enabling Interrupts */
-    Interrupt_enableInterrupt(INT_ADC14);
-
-    /* Setting up the sample timer to automatically step through the sequence
-     * convert.
-     */
-    if(!MAP_ADC14_enableSampleTimer(ADC_AUTOMATIC_ITERATION))
-    		return 0;
-
-    /* Enable conversion */
-    if(!MAP_ADC14_enableConversion())
-    	return 0;
-
     return 1;
 }
 
@@ -788,7 +818,7 @@ void reflectionMeasure(int fMin,int fMax,int numPts)
 		updateVersaclockRegs(f);
 		f+=deltaF;
 		/* measure ADC14 */
-		while(!MAP_ADC14_toggleConversionTrigger())
+		while(!ADC14_toggleConversionTrigger())
 		{
 		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
 		}
