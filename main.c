@@ -207,6 +207,7 @@ void EusciA0_ISR(void)
         {
         	uartEndOfLineFlag = true;
         	uartRXData[i] = 0;  // To end the array.
+        	i=0; // Get ready for the next subcommand.
         }
     	//MAP_UART_transmitData(EUSCI_A0_BASE, UART_receiveData(EUSCI_A0_BASE));
     }
@@ -316,17 +317,16 @@ void EUSCIB1_IRQHandler(void)
 
 int main(void)
 {
-	volatile int i, j, temp, commandData, vnaMode, fMin, fMax, numPts, commandLine =0;
+	volatile int i, j, temp, commandData[4], vnaMode, commandLine =0;
 	volatile uint16_t test[NUM_ADC14_CHANNELS];
+	char uartLocalCopy[4][4];
+	uint16_t commandBinary[4], fMin, fMax, numPts;
+
     /* Halting WDT  */
     MAP_WDT_A_holdTimer();
 
-/*    MAP_FPU_enableModule();
-    MAP_FPU_enableLazyStacking();*/
-/*
-    FPU_disableModule();
-    FPU_disableStacking();
-*/
+    MAP_FPU_enableModule();
+    MAP_FPU_enableLazyStacking();
 
     //MAP_Interrupt_enableSleepOnIsrExit();
 
@@ -408,29 +408,45 @@ int main(void)
 	{
 		if(uartEndOfLineFlag)  /* Parse this command line. */
 		{
-			commandData = atoi(uartRXData);
+			for (i=0; i<4; i++)
+			{
+				uartLocalCopy[commandLine][i] = uartRXData[i]; // In case it gets overwritten.
+			}
+			commandData[commandLine] = atoi(&(uartLocalCopy[commandLine][0]));
+			commandBinary[commandLine] = uartLocalCopy[commandLine][0]+(uartLocalCopy[commandLine][1]*256);
+				// The above is to convert from little endian char to uint16.
+			//printf("commandBinary is: %d",commandBinary);
+
+			//printf("commadData (line 413) is: %d\n",commandData);
 			switch(commandLine)
 			{
 			case 0:
-				if((commandData = 0)|(commandData = 1))
+				//printf("commadData (line 417) is: %d\n",commandData);
+				if((commandData[commandLine] == 0)|(commandData[commandLine] == 1))
 				{
-					vnaMode = commandData;
+					//printf("commandData line 420 is:%d\n",commandData);
+					vnaMode = commandData[commandLine];
+					//printf("vnaMode is: %d\n",vnaMode);
 					commandLine++;
 				}
 				else
 				{
 					/* Error occurred, something sent unexpected. */
+					printf("Problem parsing vnaMode.\n");
 				}
 				break;
 			case 1:
-				fMin = commandData/DDS_RATIO;
+				fMin = commandBinary[1];
+				printf("fMin is: %x\n",fMin);
 				commandLine++;
 				break;
 			case 2:
-				numPts = commandData;
+				numPts = commandBinary[2];
+				printf("numPts is: %x\n",numPts);
 				commandLine++;
 			case 3:
-				fMax = commandData/DDS_RATIO;
+				fMax = commandBinary[3];
+				printf("fMax is: %x\n",fMax);
 				commandLine =0;
 				if(vnaMode==REFLECTION_MODE)
 					reflectionMeasure(fMin,fMax,numPts);
@@ -441,7 +457,9 @@ int main(void)
 				break;
 			}
 		}
+		uartEndOfLineFlag = false;
 	}
+
 }
 
 void initializeClocks(void)
