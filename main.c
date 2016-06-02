@@ -136,13 +136,14 @@ uint16_t resultsBuffer[NUM_ADC14_CHANNELS]={0,0,0,0}; //ADC results
 const eUSCI_UART_Config uartConfig =
 {
         EUSCI_A_UART_CLOCKSOURCE_SMCLK,          // SMCLK Clock Source
-        26,                                      // BRDIV = 26
-        0,                                       // UCxBRF = 0
-        0,                                       // UCxBRS = 0
+        78,                                      // BRDIV = 26 for 115200 baud
+        0,                                       // UCxBRF = 0 for 115200 baud
+        0x10,                                       // UCxBRS = 0 for 115200 baud
         EUSCI_A_UART_NO_PARITY,                  // No Parity
         EUSCI_A_UART_LSB_FIRST,                  // MSB First
         EUSCI_A_UART_ONE_STOP_BIT,               // One stop bit
         EUSCI_A_UART_MODE,                       // UART mode
+//		EUSCI_A_UART_OVERSAMPLING_BAUDRATE_GENERATION // Oversampling Mode
         EUSCI_A_UART_LOW_FREQUENCY_BAUDRATE_GENERATION  // Low Frequency Mode
 };
 char uartRXData[80];
@@ -192,14 +193,23 @@ void transmissionMeasure(int fMin,int fMax,int numPts);
  * USCIA0 interrupt handler for backchannel UART.
  * For interrupts, don't forget to edit the startup...c file!
  */
+
 void EusciA0_ISR(void)
 {
-    //int receiveByte = UCA0RXBUF;
     static int i=0;
 	uint32_t status = UART_getEnabledInterruptStatus(EUSCI_A0_BASE);
+	uint_fast8_t errorStatus = UART_queryStatusFlags(EUSCI_A0_BASE,
+			EUSCI_A_UART_FRAMING_ERROR|EUSCI_A_UART_RECEIVE_ERROR
+			|EUSCI_A_UART_PARITY_ERROR|EUSCI_A_UART_OVERRUN_ERROR
+			|EUSCI_A_UART_BUSY);
 
     UART_clearInterruptFlag(EUSCI_A0_BASE, status);
-
+//    if((errorStatus & (EUSCI_A_UART_FRAMING_ERROR|EUSCI_A_UART_RECEIVE_ERROR
+//			|EUSCI_A_UART_PARITY_ERROR|EUSCI_A_UART_OVERRUN_ERROR
+//			|EUSCI_A_UART_BUSY)) != 0)
+//	{
+//		printf("errorStatus is: %x\n");
+//	}
     if(status & EUSCI_A_UART_RECEIVE_INTERRUPT)
     {
         uartRXData[i] = UART_receiveData(EUSCI_A0_BASE);
@@ -207,16 +217,9 @@ void EusciA0_ISR(void)
         {
         	uartEndOfLineFlag = true;
         	uartRXData[i] = 0;  // To end the array.
-        	i=0; // Get ready for the next subcommand.
+        	i=0; // Get ready for the next command.
         }
-    	//MAP_UART_transmitData(EUSCI_A0_BASE, UART_receiveData(EUSCI_A0_BASE));
     }
-    else if(status & EUSCI_A_UART_TRANSMIT_INTERRUPT)
-    {
-    	/* Not sure we need this. */
-    }
-    /* Echo back. */
-   // MAP_UART_transmitData(EUSCI_A0_BASE, receiveByte);
 }
 
 /*
@@ -319,8 +322,9 @@ int main(void)
 {
 	volatile int i, j, temp, commandData[4], vnaMode, commandLine =0;
 	volatile uint16_t test[NUM_ADC14_CHANNELS];
-	char uartLocalCopy[4][4];
-	uint16_t commandBinary[4], fMin, fMax, numPts;
+	//char uartLocalCopy[4][4];
+	//uint16_t commandBinary[4];
+	uint16_t fMin, fMax, numPts;
 
     /* Halting WDT  */
     MAP_WDT_A_holdTimer();
@@ -404,15 +408,48 @@ int main(void)
     }*/
     //MAP_PCM_gotoLPM0();
     /* Main while loop */
+//    for(commandLine=0;commandLine<4;commandLine++)
+//    {
+//    	for(i=0; i<4;i++)
+//    	{
+//    		uartLocalCopy[commandLine][i] =0;
+//    	}
+//    }
+
 	while(1)
 	{
 		if(uartEndOfLineFlag)  /* Parse this command line. */
 		{
-			for (i=0; i<4; i++)
+			if(uartRXData[0]=='0')
 			{
-				uartLocalCopy[commandLine][i] = uartRXData[i]; // In case it gets overwritten.
+				vnaMode = REFLECTION_MODE;
 			}
-			commandData[commandLine] = atoi(&(uartLocalCopy[commandLine][0]));
+			else if(uartRXData[0]=='1')
+			{
+				vnaMode = TRANSMISSION_MODE;
+			}
+			else printf("Command Mode was not recognized!\n");
+			fMin = uartRXData[1]+256*uartRXData[2];
+			numPts = uartRXData[3]+256*uartRXData[4];
+			fMax = uartRXData[5]+256*uartRXData[6];
+			if(uartRXData[7]!=0x0d)
+			{
+				printf("Something is wrong with the command received!\n");
+			}
+			else
+			{
+				if(vnaMode==REFLECTION_MODE)
+					reflectionMeasure(fMin,fMax,numPts);
+				else
+					transmissionMeasure(fMin,fMax,numPts);
+			}
+//			for (i=0; i<4; i++)
+//			{
+//				uartLocalCopy[commandLine][i] = uartRXData[i]; // In case it gets overwritten.
+//			}
+//			commandLine++;
+//			if(commandLine == 4) commandLine = 0;
+/*			commandData[commandLine] = atoi(&(uartLocalCopy[commandLine][0]));
 			commandBinary[commandLine] = uartLocalCopy[commandLine][0]+(uartLocalCopy[commandLine][1]*256);
 				// The above is to convert from little endian char to uint16.
 			//printf("commandBinary is: %d",commandBinary);
@@ -431,47 +468,51 @@ int main(void)
 				}
 				else
 				{
-					/* Error occurred, something sent unexpected. */
+					 Error occurred, something sent unexpected.
 					printf("Problem parsing vnaMode.\n");
 				}
 				break;
 			case 1:
 				fMin = commandBinary[1];
-				printf("fMin is: %x\n",fMin);
+				printf("fMin is: %d\n",fMin);
 				commandLine++;
 				break;
 			case 2:
 				numPts = commandBinary[2];
-				printf("numPts is: %x\n",numPts);
+				printf("numPts is: %d\n",numPts);
 				commandLine++;
 			case 3:
 				fMax = commandBinary[3];
-				printf("fMax is: %x\n",fMax);
+				printf("fMax is: %d\n",fMax);
 				commandLine =0;
 				if(vnaMode==REFLECTION_MODE)
 					reflectionMeasure(fMin,fMax,numPts);
 				else
 					transmissionMeasure(fMin,fMax,numPts);
 			default:
-				/* Don't expect to be here.  */
+				 Don't expect to be here.
 				break;
-			}
+			}*/
+			uartEndOfLineFlag = false;
 		}
-		uartEndOfLineFlag = false;
 	}
-
 }
 
 void initializeClocks(void)
 {
     /* Initialize main clock to 48MHz.  To make it 3 MHz change the 48 to 3
      * and the 16's to 1.*/
+	PCM_setCoreVoltageLevel(PCM_VCORE1);
     CS_setDCOCenteredFrequency(CS_DCO_FREQUENCY_48); // Full speed
     CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_16 );
     MAP_CS_initClockSignal(CS_HSMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_16 );
     MAP_CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_16 );
 }
 
+/*  We may want to use P3.2 and P3.3 as a Bluetooth UART because the
+ *  backchannel UART is a bit slow.  I only get every other character
+ *  at 115200 baud.
+ */
 int initializeBackChannelUART(void){
 
 	initializeClocks();
@@ -480,8 +521,10 @@ int initializeBackChannelUART(void){
         GPIO_PIN2 | GPIO_PIN3, GPIO_PRIMARY_MODULE_FUNCTION);
 
     /* Configuring UART Module */
-    if(MAP_UART_initModule(EUSCI_A0_BASE, &uartConfig)==STATUS_FAIL)
+    if(UART_initModule(EUSCI_A0_BASE, &uartConfig)==STATUS_FAIL)
     	return (STATUS_FAIL);
+
+    UART_selectDeglitchTime(EUSCI_A0_BASE,EUSCI_A_UART_DEGLITCH_TIME_200ns);
 
     /* Enable UART module */
     MAP_UART_enableModule(EUSCI_A0_BASE);
