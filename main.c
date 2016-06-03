@@ -334,7 +334,6 @@ int main(void)
 
     //MAP_Interrupt_enableSleepOnIsrExit();
 
-
     while(!initializeBackChannelUART())
     {
 		for(i=0;i<100;i++);  /*Wait to try again. */
@@ -443,56 +442,6 @@ int main(void)
 				else
 					transmissionMeasure(fMin,fMax,numPts);
 			}
-//			for (i=0; i<4; i++)
-//			{
-//				uartLocalCopy[commandLine][i] = uartRXData[i]; // In case it gets overwritten.
-//			}
-//			commandLine++;
-//			if(commandLine == 4) commandLine = 0;
-/*			commandData[commandLine] = atoi(&(uartLocalCopy[commandLine][0]));
-			commandBinary[commandLine] = uartLocalCopy[commandLine][0]+(uartLocalCopy[commandLine][1]*256);
-				// The above is to convert from little endian char to uint16.
-			//printf("commandBinary is: %d",commandBinary);
-
-			//printf("commadData (line 413) is: %d\n",commandData);
-			switch(commandLine)
-			{
-			case 0:
-				//printf("commadData (line 417) is: %d\n",commandData);
-				if((commandData[commandLine] == 0)|(commandData[commandLine] == 1))
-				{
-					//printf("commandData line 420 is:%d\n",commandData);
-					vnaMode = commandData[commandLine];
-					//printf("vnaMode is: %d\n",vnaMode);
-					commandLine++;
-				}
-				else
-				{
-					 Error occurred, something sent unexpected.
-					printf("Problem parsing vnaMode.\n");
-				}
-				break;
-			case 1:
-				fMin = commandBinary[1];
-				printf("fMin is: %d\n",fMin);
-				commandLine++;
-				break;
-			case 2:
-				numPts = commandBinary[2];
-				printf("numPts is: %d\n",numPts);
-				commandLine++;
-			case 3:
-				fMax = commandBinary[3];
-				printf("fMax is: %d\n",fMax);
-				commandLine =0;
-				if(vnaMode==REFLECTION_MODE)
-					reflectionMeasure(fMin,fMax,numPts);
-				else
-					transmissionMeasure(fMin,fMax,numPts);
-			default:
-				 Don't expect to be here.
-				break;
-			}*/
 			uartEndOfLineFlag = false;
 		}
 	}
@@ -856,7 +805,7 @@ void reflectionMeasure(int fMin,int fMax,int numPts)
 		s11I = (float)resultsBuffer[1];
 		s11M = sqrt(s11R*s11R+s11I*s11I);
 		s11A = atan2(s11I,s11R)*TO_DEGREES;
-		printf("%f,%c,%f,%c",s11M,0x0d,s11A,0x0d); // Don't think this format is right.
+		printf("%f%f",s11M,s11A); // Don't think this format is right.
 		// Waiting to hear from Dan Toma, YO3GGX.
 	}
 
@@ -884,7 +833,7 @@ void transmissionMeasure(int fMin,int fMax,int numPts)
 		s21I = (double)resultsBuffer[3];
 		s21M = sqrt(s21R*s21R+s21I*s21I);
 		s21A = atan2(s21I,s21R)*(double)TO_DEGREES;
-		printf("%f,%c,%f,%c",s21M,0x0d,s21A,0x0d);
+		printf("%f%f",s21M,s21A);
 	}
 
 }
