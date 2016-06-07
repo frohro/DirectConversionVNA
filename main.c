@@ -230,12 +230,12 @@ void EusciA0_ISR(void)
 void ADC14_IRQHandler(void)
 {
     uint64_t status;
-    status = ADC14_getEnabledInterruptStatus();
-    ADC14_clearInterruptFlag(status);
+    status = MAP_ADC14_getEnabledInterruptStatus();
+    MAP_ADC14_clearInterruptFlag(status);
 
     if(status & ADC_INT3)
     {
-        ADC14_getMultiSequenceResult(resultsBuffer);
+        MAP_ADC14_getMultiSequenceResult(resultsBuffer);
     }
 }
 
@@ -365,7 +365,7 @@ int main(void)
     setDDSFrequency(1000000); // Test the DDS out.
     initVersaClock1MHz();
 
-   /* dumpI2C();
+    /*dumpI2C();
     printf("Dumping Versaclock RAM after setting to 1MHz.\n");
     printf("Address   Received    Written");
     for (i=0x10;i<NUM_OF_REG_BYTES+0x10;i++)
@@ -489,8 +489,8 @@ int initializeBackChannelUART(void){
 
 int initializeADC(void){
     /* Initializing ADC (MCLK/1/1) */
-    ADC14_enableModule();
-    ADC14_initModule(ADC_CLOCKSOURCE_MCLK, ADC_PREDIVIDER_1, ADC_DIVIDER_1,
+    MAP_ADC14_enableModule();
+    MAP_ADC14_initModule(ADC_CLOCKSOURCE_MCLK, ADC_PREDIVIDER_1, ADC_DIVIDER_1,
             ADC_NOROUTE);
 
     /* Configuring GPIOs for Analog In
@@ -500,39 +500,40 @@ int initializeADC(void){
      * Pin 4.3 is S21_I, A10 resultsBuffer[2]
      * Pin 4.1 is S21_Q, A12 resultsBuffer[3] */
 
-    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P5,
+    MAP_GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P5,
              GPIO_PIN1| GPIO_PIN0, GPIO_TERTIARY_MODULE_FUNCTION);
-    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
+    MAP_GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P4,
             GPIO_PIN1 | GPIO_PIN3, GPIO_TERTIARY_MODULE_FUNCTION);
 
     /* Configuring ADC Memory (ADC_MEM0 - ADC_MEM3, with A12, A10, A5, A3
      * with no repeat) with VCC and VSS reference */
-    if(!ADC14_configureMultiSequenceMode(ADC_MEM0, ADC_MEM3, false))
+    if(!MAP_ADC14_configureMultiSequenceMode(ADC_MEM0, ADC_MEM3, false))
     	return(0);
 
-    if(!ADC14_configureConversionMemory(ADC_MEM0,
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM0,
             	ADC_VREFPOS_AVCC_VREFNEG_VSS,
 				ADC_INPUT_A5, ADC_NONDIFFERENTIAL_INPUTS))
     	return(0);
-    if(!ADC14_configureConversionMemory(ADC_MEM1,
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM1,
                 ADC_VREFPOS_AVCC_VREFNEG_VSS,
                 ADC_INPUT_A3, ADC_NONDIFFERENTIAL_INPUTS))
         return(0);
-    if(!ADC14_configureConversionMemory(ADC_MEM2,
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM2,
                 ADC_VREFPOS_AVCC_VREFNEG_VSS,
                 ADC_INPUT_A10, ADC_NONDIFFERENTIAL_INPUTS))
         		return(0);
-    if(!ADC14_configureConversionMemory(ADC_MEM3,
+    if(!MAP_ADC14_configureConversionMemory(ADC_MEM3,
                 ADC_VREFPOS_AVCC_VREFNEG_VSS,
                 ADC_INPUT_A12, ADC_NONDIFFERENTIAL_INPUTS))
         return(0);
 
     /* Enabling the interrupt when a conversion on channel 3 (end of sequence)
      *  is complete and enabling conversions */
-    ADC14_enableInterrupt(ADC_INT3);
+    MAP_ADC14_enableInterrupt(ADC_INT3);
+
 
     /* Enabling Interrupts */
-    Interrupt_enableInterrupt(INT_ADC14);
+    MAP_Interrupt_enableInterrupt(INT_ADC14);
 
     /* Setting up the sample timer to automatically step through the sequence
      * convert.
@@ -789,7 +790,9 @@ void reflectionMeasure(int fMin,int fMax,int numPts)
 	int i;
 	int f = fMin;
 	int deltaF = (fMax-fMin)/numPts;
-	float s11R, s11I, s11M, s11A;
+	//float s11R, s11I, s11M, s11A;
+	uint16_t s11RUint16,s11IUint16;
+	unsigned char s11RL,s11RH,s11IL,s11IH;
 	for(i=0;i<numPts;i++)
 	{
 		/* Set oscillators */
@@ -801,11 +804,18 @@ void reflectionMeasure(int fMin,int fMax,int numPts)
 		{
 		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
 		}
-		s11R = (float)resultsBuffer[0];
-		s11I = (float)resultsBuffer[1];
-		s11M = sqrt(s11R*s11R+s11I*s11I);
-		s11A = atan2(s11I,s11R)*TO_DEGREES;
-		printf("%f%f",s11M,s11A); // Don't think this format is right.
+		s11RUint16 = (uint16_t)resultsBuffer[0];
+		s11IUint16 = (uint16_t)resultsBuffer[1];
+		s11RL = (unsigned char)(s11RUint16 & 0xff);
+		s11RH = (unsigned char)((s11RUint16 << 8)&0xff);
+		s11IL = (unsigned char)(s11IUint16 & 0xff);
+		s11IH = (unsigned char)((s11IUint16 << 8)&0xff);
+		printf("%c%c%c%c",s11RL,s11RH,s11IL,s11IH);
+		//s11R = (float)resultsBuffer[0];
+		//s11I = (float)resultsBuffer[1];
+		//s11M = sqrt(s11R*s11R+s11I*s11I);
+		//s11A = atan2(s11I,s11R)*TO_DEGREES;
+		//printf("%f%f",s11M,s11A); // Don't think this format is right.
 		// Waiting to hear from Dan Toma, YO3GGX.
 	}
 
@@ -817,7 +827,9 @@ void transmissionMeasure(int fMin,int fMax,int numPts)
 	int i;
 	int f = fMin;
 	int deltaF = (fMax-fMin)/numPts;
-	double s21R, s21I, s21M, s21A;
+	uint16_t s21RUint16,s21IUint16;
+	unsigned char s21RL,s21RH,s21IL,s21IH;
+	//double s21R, s21I, s21M, s21A;
 	for(i=0;i<numPts;i++)
 	{
 		/* Set oscillators */
@@ -829,11 +841,18 @@ void transmissionMeasure(int fMin,int fMax,int numPts)
 		{
 		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
 		}
-		s21R = (double)resultsBuffer[2];
-		s21I = (double)resultsBuffer[3];
-		s21M = sqrt(s21R*s21R+s21I*s21I);
-		s21A = atan2(s21I,s21R)*(double)TO_DEGREES;
-		printf("%f%f",s21M,s21A);
+		//s21R = (double)resultsBuffer[2];
+		//s21I = (double)resultsBuffer[3];
+		s21RUint16 = (uint16_t)resultsBuffer[0];
+		s21IUint16 = (uint16_t)resultsBuffer[1];
+		s21RL = (unsigned char)(s21RUint16 & 0xff);
+		s21RH = (unsigned char)((s21RUint16 << 8)&0xff);
+		s21IL = (unsigned char)(s21IUint16 & 0xff);
+		s21IH = (unsigned char)((s21IUint16 << 8)&0xff);
+		printf("%c%c%c%c",s21RL,s21RH,s21IL,s21IH);
+		//s21M = sqrt(s21R*s21R+s21I*s21I);
+		//s21A = atan2(s21I,s21R)*(double)TO_DEGREES;
+		//printf("%f%f",s21M,s21A);
 	}
 
 }
