@@ -39,6 +39,7 @@
 						us. */
 /* ADC14 constants */
 #define NUM_ADC14_CHANNELS 4
+#define NUM_AVG_DC 100
 /* Other constants */
 #define PI atan(1.0)
 #define TO_DEGREES 180/PI
@@ -122,6 +123,7 @@ const eUSCI_I2C_MasterConfig i2cConfig =
 
 /* Results buffer for ADC14 */
 uint16_t resultsBuffer[NUM_ADC14_CHANNELS]={0,0,0,0}; //ADC results
+uint16_t adcDCOffset[NUM_ADC14_CHANNELS];
 
 /* UART Configuration Parameter. These are the configuration parameters to
  * make the eUSCI A UART module to operate with a 115200 baud rate. These
@@ -318,6 +320,7 @@ void EUSCIB1_IRQHandler(void)
 	}
 }
 
+/* Need to get a DC baseline measurement to subtract out. */
 int main(void)
 {
 	volatile int i, j, temp, commandData[4], vnaMode, commandLine =0;
@@ -343,10 +346,20 @@ int main(void)
     {
 		for(i=0;i<100;i++); // Wait to try again.
 	}
-
 	Interrupt_enableMaster();
+    while(!MAP_ADC14_toggleConversionTrigger()){
+    	for(i=0;i<100;i++);  // Wait for conversion to finish.
+    }
+    for (j=0; j<NUM_AVG_DC; j++){
+    	for(i=0; i<NUM_ADC14_CHANNELS; i++){ // Maybe should average this.
+    		adcDCOffset[i] += resultsBuffer[i];
+    	}
+    }
+    for (i=0; i<NUM_ADC14_CHANNELS; i++)
+    {
+    	adcDCOffset[i] = adcDCOffset[i]/NUM_AVG_DC;
+    }
 
-     /* Enabling the FPU for floating point operation */
     while(!initializeDDS())
     {
     	for(i=0;i<100;i++);  //Wait to try again.
@@ -362,10 +375,10 @@ int main(void)
     	for(i=0;i<100;i++);  //Wait to try again.
     }
 
-    setDDSFrequency(1000000); // Test the DDS out.
+    /*setDDSFrequency(1000000); // Test the DDS out.
     initVersaClock1MHz();
-
-    /*dumpI2C();
+*/
+    dumpI2C();
     printf("Dumping Versaclock RAM after setting to 1MHz.\n");
     printf("Address   Received    Written");
     for (i=0x10;i<NUM_OF_REG_BYTES+0x10;i++)
@@ -376,8 +389,8 @@ int main(void)
     		printf("They don't match!\n");
     }
 
-    setDDSFrequency(10000000);
-    if(!updateVersaclockRegs(10000000))
+    setDDSFrequency(1000000);
+    if(!updateVersaclockRegs(1000000))
     	printf("updateVersaClockRegs failed!\n");
     dumpI2C();
 
@@ -390,7 +403,7 @@ int main(void)
     		if(i2cRXData[versaClockRegisters.changedAddresses[i]]!=
     				versaClockRegisters.registerValues[12][i])
     			printf("VersaClock Registers did NOT match!\n");
-    }*/
+    }
     /*		Pulse the start of a conversion.	*/
 
     /*    while(!MAP_ADC14_toggleConversionTrigger()){
@@ -804,8 +817,8 @@ void reflectionMeasure(int fMin,int fMax,int numPts)
 		{
 		    	for(i=0;i<100;i++);  // Wait for conversion to finish.
 		}
-		s11RUint16 = (uint16_t)resultsBuffer[0];
-		s11IUint16 = (uint16_t)resultsBuffer[1];
+		s11RUint16 = (uint16_t)(resultsBuffer[0]-adcDCOffset[0]);
+		s11IUint16 = (uint16_t)(resultsBuffer[1]-adcDCOffset[1]);
 		s11RL = (unsigned char)(s11RUint16 & 0xff);
 		s11RH = (unsigned char)((s11RUint16 << 8)&0xff);
 		s11IL = (unsigned char)(s11IUint16 & 0xff);
@@ -843,8 +856,8 @@ void transmissionMeasure(int fMin,int fMax,int numPts)
 		}
 		//s21R = (double)resultsBuffer[2];
 		//s21I = (double)resultsBuffer[3];
-		s21RUint16 = (uint16_t)resultsBuffer[0];
-		s21IUint16 = (uint16_t)resultsBuffer[1];
+		s21RUint16 = (uint16_t)(resultsBuffer[2]-adcDCOffset[2]);
+		s21IUint16 = (uint16_t)(resultsBuffer[3]-adcDCOffset[3]);
 		s21RL = (unsigned char)(s21RUint16 & 0xff);
 		s21RH = (unsigned char)((s21RUint16 << 8)&0xff);
 		s21IL = (unsigned char)(s21IUint16 & 0xff);
